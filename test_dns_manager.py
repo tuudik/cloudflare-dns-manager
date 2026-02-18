@@ -2,11 +2,13 @@
 """
 Test suite for Cloudflare DNS Manager
 """
+import importlib.util
 import os
 import random
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import docker
@@ -19,6 +21,7 @@ CF_ZONE_NAME = os.getenv("CF_ZONE_NAME", "example.com")
 CF_ZONE_ID = os.getenv("CF_ZONE_ID")
 TEST_SLEEP = 5  # Seconds to wait for DNS sync
 REQUIRE_CF_TESTS = os.getenv("REQUIRE_CF_TESTS", "").lower() in ("1", "true", "yes")
+DNS_MANAGER_PATH = Path(__file__).with_name("dns-manager.py")
 
 
 class Colors:
@@ -195,6 +198,18 @@ def cleanup_test_containers(containers: List[docker.models.containers.Container]
             log_test(f"Container cleanup: {container.name}", "FAIL", str(e))
 
 
+def load_dns_manager_module():
+    """Load dns-manager.py as a module for direct invocation."""
+    if not DNS_MANAGER_PATH.exists():
+        pytest.fail("dns-manager.py not found")
+    spec = importlib.util.spec_from_file_location("dns_manager", DNS_MANAGER_PATH)
+    module = importlib.util.module_from_spec(spec)
+    if spec.loader is None:
+        pytest.fail("Failed to load dns-manager module")
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.fixture(scope="module")
 def test_env():
     """Create temporary test containers and return test records + containers."""
@@ -240,6 +255,29 @@ def api() -> CloudflareAPI:
     return api_client
 
 
+@pytest.fixture(scope="module")
+def dns_manager_module():
+    return load_dns_manager_module()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def sync_records(api: CloudflareAPI, tests: List[Dict], dns_manager_module):
+    manager = dns_manager_module.CloudflareDNSManager(api.api_token, CF_ZONE_NAME)
+    manager.zone_id = api.zone_id
+    desired_records = [
+        {
+            "name": test["name"],
+            "type": "A",
+            "content": test["expected_ip"],
+            "proxied": False,
+            "ttl": 1,
+        }
+        for test in tests
+    ]
+    manager.sync_records(desired_records)
+    yield
+
+
 @pytest.fixture(scope="module", autouse=True)
 def cleanup_records(api: CloudflareAPI, tests: List[Dict]):
     record_names = [test["name"] for test in tests]
@@ -247,7 +285,7 @@ def cleanup_records(api: CloudflareAPI, tests: List[Dict]):
     cleanup_test_records(api, record_names)
 
 
-def test_docker_containers(containers: List[docker.models.containers.Container]) -> bool:
+def test_docker_containers(containers: List[docker.models.containers.Container]) -> None:
     """Test that test containers are running"""
     log_test("Docker Connection", "INFO", "Checking test containers...")
 
@@ -270,7 +308,6 @@ def test_docker_containers(containers: List[docker.models.containers.Container])
 
     result = len(running_containers) == len(containers)
     assert result
-    return result
 
 
 def test_dns_records(api: CloudflareAPI, tests: List[Dict]):
