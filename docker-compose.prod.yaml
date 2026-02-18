@@ -1,0 +1,17 @@
+# Production Docker Compose Configuration
+# Use the pre-built image from GitHub Container Registry
+
+services:
+  cloudflare-dns-manager:
+    image: ghcr.io/tuudik/cloudflare-dns-manager:latest
+    container_name: cloudflare-dns-manager
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - /path/to/your/cf_api_token:/run/secrets/cf_api_token:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CF_API_TOKEN_FILE=/run/secrets/cf_api_token
+      - CF_ZONE_NAME=yourdomain.com
+      - WATCH_DOCKER=true
+    network_mode: host

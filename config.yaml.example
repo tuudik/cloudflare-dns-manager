@@ -1,0 +1,40 @@
+# Example configuration file for Cloudflare DNS Manager
+# Copy this to config.yaml and fill in your actual values
+
+global:
+  # Your domain name
+  domain: "example.com"
+  
+  # Cloudflare Zone ID (found in Cloudflare dashboard)
+  zone_id: "your_zone_id_here"
+  
+  # Cloudflare API Token (create with DNS:Edit permission)
+  api_token: "your_api_token_here"
+  
+  # Default IP address for auto-discovered containers (your server's local IP)
+  default_ip: "192.168.1.100"
+  
+  # Enable Docker container auto-discovery
+  docker_discovery: true
+  
+  # Default settings for auto-discovered Docker containers
+  docker_defaults:
+    proxied: false  # Set to true to enable Cloudflare proxy
+    ttl: 1         # 1 = automatic TTL
+    type: "A"      # Record type
+
+# Per-domain configuration (if managing multiple domains)
+domains:
+  example.com:
+    zone_id: "your_zone_id_here"
+    api_token: "your_api_token_here"
+
+# Manual DNS records (for non-Docker services)
+# Leave empty if only using Docker auto-discovery
+manual_records: []
+  # Example:
+  # - name: "manual-service"
+  #   ip: "192.168.1.50"
+  #   proxied: false
+  #   ttl: 1
+  #   type: "A"

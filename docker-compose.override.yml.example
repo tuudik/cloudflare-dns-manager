@@ -1,0 +1,44 @@
+# Docker Compose Override - Local Development/Production
+# Copy this to docker-compose.override.yml and customize for your setup
+# This file is automatically loaded by docker compose and overrides docker-compose.yaml
+
+services:
+  cloudflare-dns-manager:
+    # Uncomment to build locally instead of using published image
+    # build: .
+    
+    volumes:
+      # Mount your API token file (if using file-based token)
+      - /opt/traefik/secrets/cf_dns_api_token:/run/secrets/cf_api_token:ro
+    
+    environment:
+      # Set your actual domain
+      - CF_ZONE_NAME=example.com
+      
+      # Option 1: Use token file (recommended)
+      - CF_API_TOKEN_FILE=/run/secrets/cf_api_token
+      
+      # Option 2: Set token directly (less secure, but simpler)
+      # - CF_API_TOKEN=your_token_here
+
+  # Uncomment test containers for testing
+  # Make sure to update domain to match your actual domain
+  
+  # cf-test-minimal:
+  #   labels:
+  #     - "cloudflare-dns-manager.expose=private"
+  
+  # cf-test-custom-subdomain:
+  #   labels:
+  #     - "cloudflare-dns-manager.expose=private"
+  #     - "cloudflare-dns-manager.subdomain=testsubdomain"
+  
+  # cf-test-custom-ip:
+  #   labels:
+  #     - "cloudflare-dns-manager.expose=private"
+  #     - "cloudflare-dns-manager.ip=10.0.0.100"
+  
+  # cf-test-traefik-host:
+  #   labels:
+  #     - "cloudflare-dns-manager.expose=private"
+  #     - "traefik.http.routers.test.rule=Host(`traefik-test.example.com`)"

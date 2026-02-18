@@ -1,0 +1,65 @@
+services:
+  cloudflare-dns-manager:
+    image: ghcr.io/tuudik/cloudflare-dns-manager:latest
+    # For local development, use: build: .
+    container_name: cloudflare-dns-manager
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CF_ZONE_NAME=example.com
+      - WATCH_DOCKER=true
+    network_mode: host
+    # For API token, either:
+    # 1. Mount token file and use CF_API_TOKEN_FILE env var
+    # 2. Set CF_API_TOKEN directly in docker-compose.override.yml
+    # See docker-compose.override.yml.example for local customization
+
+  # Test containers - Optional, comment out if not needed
+  # These demonstrate different label configurations for testing
+  
+  # cf-test-minimal:
+  #   image: alpine:latest
+  #   container_name: cf-test-minimal
+  #   command: sleep infinity
+  #   restart: unless-stopped
+  #   labels:
+  #     - "cloudflare-dns-manager.expose=private"
+  #     # Uses container name as subdomain
+  #     # Uses global defaults for IP, TTL, type
+  
+  # cf-test-custom-subdomain:
+  #   image: alpine:latest
+  #   container_name: cf-test-custom-subdomain
+  #   command: sleep infinity
+  #   restart: unless-stopped
+  #   labels:
+  #     - "cloudflare-dns-manager.expose=private"
+  #     - "cloudflare-dns-manager.subdomain=testsubdomain"
+  #     # Custom subdomain, other defaults from global config
+  
+  # cf-test-custom-ip:
+  #   image: alpine:latest
+  #   container_name: cf-test-custom-ip
+  #   command: sleep infinity
+  #   restart: unless-stopped
+  #   labels:
+  #     - "cloudflare-dns-manager.expose=private"
+  #     - "cloudflare-dns-manager.ip=10.0.0.100"
+  #     # Custom IP address for testing
+  
+  # cf-test-traefik-host:
+  #   image: alpine:latest
+  #   container_name: cf-test-traefik-host
+  #   command: sleep infinity
+  #   restart: unless-stopped
+  #   labels:
+  #     - "cloudflare-dns-manager.expose=private"
+  #     - "traefik.http.routers.test.rule=Host(`traefik-test.example.com`)"
+  #     # Subdomain extracted from Traefik Host rule
+
+# Uncomment for isolated test network
+# networks:
+#   default:
+#     name: cloudflare-dns-manager
