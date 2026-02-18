@@ -60,7 +60,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_TEST }}
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID_TEST }}
-          CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
+          CF_ZONE_NAME: ${{ secrets.CF_ZONE_NAME_TEST || 'test.example.com' }}
         run: |
           mkdir -p .secrets
           printf "%s" "${CLOUDFLARE_API_TOKEN}" > .secrets/cf_api_token
@@ -87,7 +87,7 @@ jobs:
       - name: Run tests with pytest
         env:
           CF_API_TOKEN_FILE: .secrets/cf_api_token
-          CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
+          CF_ZONE_NAME: ${{ secrets.CF_ZONE_NAME_TEST || 'test.example.com' }}
           CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID_TEST }}
           REQUIRE_CF_TESTS: true
           CF_MANAGED_COMMENT: github-actions:${{ github.run_id }}
