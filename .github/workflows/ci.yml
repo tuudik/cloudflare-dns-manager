@@ -62,6 +62,8 @@ jobs:
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID_TEST }}
           CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
         run: |
+          mkdir -p .secrets
+          printf "%s" "${CLOUDFLARE_API_TOKEN}" > .secrets/cf_api_token
           cat > config.yaml << EOF
           global:
             domain: "${CF_ZONE_NAME}"
@@ -84,10 +86,10 @@ jobs:
           
       - name: Run tests with pytest
         env:
+          CF_API_TOKEN_FILE: .secrets/cf_api_token
           CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
         run: |
           pytest test_dns_manager.py -v --cov=./dns-manager.py --cov-report=xml --cov-report=term
-        continue-on-error: true
         
       - name: Upload coverage reports
         uses: codecov/codecov-action@v5
@@ -95,7 +97,6 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           handle_no_reports_found: true
-        continue-on-error: true
 
   docker-test-build:
     name: Test Docker Build
