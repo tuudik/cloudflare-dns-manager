@@ -58,9 +58,7 @@ class CloudflareDNSManager:
 
         for _ in range(retries + 1):
             try:
-                response = requests.request(
-                    method, url, timeout=self.timeout, **kwargs
-                )
+                response = requests.request(method, url, timeout=self.timeout, **kwargs)
             except requests.RequestException as exc:
                 log(
                     "error",
