@@ -356,7 +356,6 @@ def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # no
         return []
 
 
-
 class ConfigFileHandler(FileSystemEventHandler):
     """Watches for changes to the config file"""
 
@@ -370,9 +369,12 @@ class ConfigFileHandler(FileSystemEventHandler):
             current_time = time.time()
             if current_time - self.last_modified > 1:
                 self.last_modified = current_time
-                log("info", "Config file changed, triggering sync", file=event.src_path)
+                log(
+                    "info",
+                    "Config file changed, triggering sync",
+                    file=event.src_path,
+                )
                 self.callback()
-
 
 
 class DNSManagerService:
