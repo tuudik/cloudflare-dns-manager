@@ -61,6 +61,25 @@ class CloudflareAPI:
         self.session = requests.Session()
         self.zone_id = None
 
+    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+        retries = 5
+        backoff = 1
+        response = None
+
+        for _ in range(retries + 1):
+            response = self.session.request(method, url, **kwargs)
+            if response.status_code != 429:
+                return response
+
+            retry_after = response.headers.get("Retry-After")
+            if retry_after and retry_after.isdigit():
+                time.sleep(int(retry_after))
+            else:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 10)
+
+        return response
+
     def _log_api_error(self, action: str, response: requests.Response) -> None:
         log_test(
             "Cloudflare API",
@@ -75,7 +94,7 @@ class CloudflareAPI:
 
         url = f"{self.base_url}/zones"
         params = {"name": self.zone_name}
-        response = self.session.get(url, headers=self.headers, params=params)
+        response = self._request("get", url, headers=self.headers, params=params)
 
         if response.status_code == 200:
             data = response.json()
@@ -94,7 +113,7 @@ class CloudflareAPI:
             return None
 
         url = f"{self.base_url}/zones/{self.zone_id}"
-        response = self.session.get(url, headers=self.headers)
+        response = self._request("get", url, headers=self.headers)
 
         if response.status_code == 200:
             data = response.json()
@@ -116,7 +135,7 @@ class CloudflareAPI:
 
         url = f"{self.base_url}/zones/{self.zone_id}/dns_records"
         params = {"name": full_name, "type": record_type}
-        response = self.session.get(url, headers=self.headers, params=params)
+        response = self._request("get", url, headers=self.headers, params=params)
 
         if response.status_code == 200:
             data = response.json()
@@ -136,7 +155,7 @@ class CloudflareAPI:
             self.get_zone_id()
 
         url = f"{self.base_url}/zones/{self.zone_id}/dns_records/{record_id}"
-        response = self.session.delete(url, headers=self.headers)
+        response = self._request("delete", url, headers=self.headers)
         return response.status_code == 200
 
 

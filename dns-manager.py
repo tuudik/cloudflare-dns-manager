@@ -45,6 +45,26 @@ class CloudflareDNSManager:
         }
         self.zone_id = None
 
+    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Send a request with basic retry on rate limiting."""
+        retries = 3
+        backoff = 1
+        response = None
+
+        for _ in range(retries + 1):
+            response = requests.request(method, url, **kwargs)
+            if response.status_code != 429:
+                return response
+
+            retry_after = response.headers.get("Retry-After")
+            if retry_after and retry_after.isdigit():
+                time.sleep(int(retry_after))
+            else:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 10)
+
+        return response
+
     def get_zone_id(self) -> Optional[str]:
         """Get the zone ID for the domain"""
         if self.zone_id:
@@ -53,7 +73,7 @@ class CloudflareDNSManager:
         url = f"{self.base_url}/zones"
         params = {"name": self.zone_name}
 
-        response = requests.get(url, headers=self.headers, params=params)
+        response = self._request("get", url, headers=self.headers, params=params)
 
         if response.status_code != 200:
             log(
@@ -81,7 +101,7 @@ class CloudflareDNSManager:
         url = f"{self.base_url}/zones/{self.zone_id}/dns_records"
         params = {"per_page": 100}
 
-        response = requests.get(url, headers=self.headers, params=params)
+        response = self._request("get", url, headers=self.headers, params=params)
 
         if response.status_code != 200:
             log("error", "Failed to get DNS records", status=response.status_code)
@@ -119,7 +139,7 @@ class CloudflareDNSManager:
         if comment:
             payload["comment"] = comment
 
-        response = requests.post(url, headers=self.headers, json=payload)
+        response = self._request("post", url, headers=self.headers, json=payload)
 
         if response.status_code == 200:
             log(
@@ -163,7 +183,7 @@ class CloudflareDNSManager:
         if comment:
             payload["comment"] = comment
 
-        response = requests.put(url, headers=self.headers, json=payload)
+        response = self._request("put", url, headers=self.headers, json=payload)
 
         if response.status_code == 200:
             log(
@@ -188,7 +208,7 @@ class CloudflareDNSManager:
         """Delete a DNS record"""
         url = f"{self.base_url}/zones/{self.zone_id}/dns_records/{record_id}"
 
-        response = requests.delete(url, headers=self.headers)
+        response = self._request("delete", url, headers=self.headers)
 
         if response.status_code == 200:
             log("info", "DNS record deleted", name=name)
