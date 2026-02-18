@@ -88,6 +88,7 @@ jobs:
         env:
           CF_API_TOKEN_FILE: .secrets/cf_api_token
           CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
+          REQUIRE_CF_TESTS: true
         run: |
           pytest test_dns_manager.py -v --cov=./dns-manager.py --cov-report=xml --cov-report=term
         

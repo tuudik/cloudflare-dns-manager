@@ -17,6 +17,7 @@ import requests
 CF_API_TOKEN_FILE = os.getenv("CF_API_TOKEN_FILE", "/run/secrets/cf_api_token")
 CF_ZONE_NAME = os.getenv("CF_ZONE_NAME", "example.com")
 TEST_SLEEP = 5  # Seconds to wait for DNS sync
+REQUIRE_CF_TESTS = os.getenv("REQUIRE_CF_TESTS", "").lower() in ("1", "true", "yes")
 
 
 class Colors:
@@ -200,6 +201,8 @@ def test_env():
         client = docker.from_env()
         client.ping()
     except Exception as e:
+        if REQUIRE_CF_TESTS:
+            pytest.fail(f"Docker not available: {e}")
         pytest.skip(f"Docker not available: {e}")
 
     tests, containers = setup_test_containers()
@@ -222,9 +225,13 @@ def api() -> CloudflareAPI:
     try:
         api_token = read_api_token()
     except SystemExit:
+        if REQUIRE_CF_TESTS:
+            pytest.fail("Missing API token")
         pytest.skip("Missing API token")
     api_client = CloudflareAPI(api_token, CF_ZONE_NAME)
     if not api_client.get_zone_id():
+        if REQUIRE_CF_TESTS:
+            pytest.fail("Failed to get zone ID")
         pytest.skip("Failed to get zone ID")
     return api_client
 
