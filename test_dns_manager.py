@@ -22,6 +22,7 @@ CF_ZONE_ID = os.getenv("CF_ZONE_ID")
 TEST_SLEEP = 5  # Seconds to wait for DNS sync
 REQUIRE_CF_TESTS = os.getenv("REQUIRE_CF_TESTS", "").lower() in ("1", "true", "yes")
 DNS_MANAGER_PATH = Path(__file__).with_name("dns-manager.py")
+REDACT_TOKEN = "<redacted-domain>"
 
 
 class Colors:
@@ -34,6 +35,8 @@ class Colors:
 
 def log_test(name: str, status: str, message: str = ""):
     """Pretty print test results"""
+    if CF_ZONE_NAME:
+        message = message.replace(CF_ZONE_NAME, REDACT_TOKEN)
     if status == "PASS":
         symbol = f"{Colors.GREEN}✓{Colors.RESET}"
     elif status == "FAIL":
@@ -55,7 +58,15 @@ class CloudflareAPI:
             "Authorization": f"Bearer {api_token}",
             "Content-Type": "application/json",
         }
+        self.session = requests.Session()
         self.zone_id = None
+
+    def _log_api_error(self, action: str, response: requests.Response) -> None:
+        log_test(
+            "Cloudflare API",
+            "FAIL",
+            f"{action} failed ({response.status_code}): {response.text}",
+        )
 
     def get_zone_id(self) -> str:
         """Get zone ID"""
@@ -64,13 +75,17 @@ class CloudflareAPI:
 
         url = f"{self.base_url}/zones"
         params = {"name": self.zone_name}
-        response = requests.get(url, headers=self.headers, params=params)
+        response = self.session.get(url, headers=self.headers, params=params)
 
         if response.status_code == 200:
             data = response.json()
             if data.get("success") and data.get("result"):
                 self.zone_id = data["result"][0]["id"]
                 return self.zone_id
+            self._log_api_error("Get zone ID", response)
+            return None
+
+        self._log_api_error("Get zone ID", response)
         return None
 
     def get_zone_name(self) -> str:
@@ -79,13 +94,17 @@ class CloudflareAPI:
             return None
 
         url = f"{self.base_url}/zones/{self.zone_id}"
-        response = requests.get(url, headers=self.headers)
+        response = self.session.get(url, headers=self.headers)
 
         if response.status_code == 200:
             data = response.json()
             if data.get("success") and data.get("result"):
                 self.zone_name = data["result"]["name"]
                 return self.zone_name
+            self._log_api_error("Get zone name", response)
+            return None
+
+        self._log_api_error("Get zone name", response)
         return None
 
     def get_record(self, name: str, record_type: str = "A") -> Dict:
@@ -97,12 +116,18 @@ class CloudflareAPI:
 
         url = f"{self.base_url}/zones/{self.zone_id}/dns_records"
         params = {"name": full_name, "type": record_type}
-        response = requests.get(url, headers=self.headers, params=params)
+        response = self.session.get(url, headers=self.headers, params=params)
 
         if response.status_code == 200:
             data = response.json()
             if data.get("success") and data.get("result"):
                 return data["result"][0] if data["result"] else None
+            if data.get("success") and not data.get("result"):
+                return None
+            self._log_api_error("Get record", response)
+            return None
+
+        self._log_api_error("Get record", response)
         return None
 
     def delete_record(self, record_id: str) -> bool:
@@ -111,7 +136,7 @@ class CloudflareAPI:
             self.get_zone_id()
 
         url = f"{self.base_url}/zones/{self.zone_id}/dns_records/{record_id}"
-        response = requests.delete(url, headers=self.headers)
+        response = self.session.delete(url, headers=self.headers)
         return response.status_code == 200
 
 
@@ -216,6 +241,21 @@ def load_dns_manager_module():
     if spec.loader is None:
         pytest.fail("Failed to load dns-manager module")
     spec.loader.exec_module(module)
+
+    original_log = module.log
+
+    def redacted_log(level: str, message: str, **kwargs):
+        if CF_ZONE_NAME:
+            message = message.replace(CF_ZONE_NAME, REDACT_TOKEN)
+        redacted_kwargs = {}
+        for key, value in kwargs.items():
+            if isinstance(value, str) and CF_ZONE_NAME:
+                redacted_kwargs[key] = value.replace(CF_ZONE_NAME, REDACT_TOKEN)
+            else:
+                redacted_kwargs[key] = value
+        original_log(level, message, **redacted_kwargs)
+
+    module.log = redacted_log
     return module
 
 
@@ -300,6 +340,7 @@ def sync_records(api: CloudflareAPI, tests: List[Dict], dns_manager_module):
 
 def test_docker_containers(containers: List[docker.models.containers.Container]) -> None:
     """Test that test containers are running"""
+    log_test("Test Scope", "INFO", "Function: test_docker_containers")
     log_test("Docker Connection", "INFO", "Checking test containers...")
 
     running_containers = []
@@ -323,12 +364,36 @@ def test_docker_containers(containers: List[docker.models.containers.Container])
     assert result
 
 
+def wait_for_record_content(
+    api: CloudflareAPI,
+    record_name: str,
+    expected_ip: str,
+    timeout_seconds: int = 20,
+    max_interval: int = 8,
+) -> Tuple[bool, Dict]:
+    """Wait until a DNS record matches the expected IP using exponential backoff."""
+    deadline = time.time() + timeout_seconds
+    interval = 1
+    last_record = None
+
+    while time.time() < deadline:
+        last_record = api.get_record(record_name)
+        if last_record and last_record.get("content") == expected_ip:
+            return True, last_record
+        time.sleep(interval)
+        interval = min(interval * 2, max_interval)
+
+    return False, last_record
+
+
 def run_dns_record_checks(
     api: CloudflareAPI,
     tests: List[Dict],
     timeout_seconds: int = 20,
+    phase: str = "check",
 ) -> Tuple[int, int]:
     """Check that DNS records are created correctly and return counts."""
+    log_test("DNS Records", "INFO", f"Phase: {phase}")
     log_test("DNS Records", "INFO", f"Waiting {TEST_SLEEP}s for sync...")
     time.sleep(TEST_SLEEP)
 
@@ -337,16 +402,12 @@ def run_dns_record_checks(
 
     for test in tests:
         expected_ip = test["expected_ip"]
-        record = None
-        matched = False
-
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            record = api.get_record(test["name"])
-            if record and record.get("content") == expected_ip:
-                matched = True
-                break
-            time.sleep(1)
+        matched, record = wait_for_record_content(
+            api,
+            test["name"],
+            expected_ip,
+            timeout_seconds=timeout_seconds,
+        )
 
         if matched:
             log_test(
@@ -377,14 +438,16 @@ def wait_for_record_absence(
     api: CloudflareAPI,
     record_name: str,
     timeout_seconds: int = 10,
-    interval_seconds: float = 1.0,
+    max_interval: int = 8,
 ) -> bool:
-    """Wait until a DNS record no longer exists."""
+    """Wait until a DNS record no longer exists using exponential backoff."""
     deadline = time.time() + timeout_seconds
+    interval = 1
     while time.time() < deadline:
         if api.get_record(record_name) is None:
             return True
-        time.sleep(interval_seconds)
+        time.sleep(interval)
+        interval = min(interval * 2, max_interval)
     return False
 
 
@@ -431,11 +494,16 @@ def test_dns_records(
     dns_manager_module,
 ) -> None:
     """Test that DNS records are created correctly"""
-    passed, failed = run_dns_record_checks(api, tests, timeout_seconds=30)
+    log_test("Test Scope", "INFO", "Function: test_dns_records (create/update/delete)")
+    passed, failed = run_dns_record_checks(
+        api, tests, timeout_seconds=30, phase="create"
+    )
     assert failed == 0
 
     updated_tests = update_dns_records(api, dns_manager_module, tests)
-    passed, failed = run_dns_record_checks(api, updated_tests, timeout_seconds=60)
+    passed, failed = run_dns_record_checks(
+        api, updated_tests, timeout_seconds=60, phase="update"
+    )
     assert failed == 0
 
     manager = dns_manager_module.CloudflareDNSManager(api.api_token, api.zone_name)
@@ -536,7 +604,9 @@ def main():
         # Test 2: DNS records
         print(f"{Colors.YELLOW}Test 2: DNS Record Creation{Colors.RESET}")
         print("-" * 60)
-        passed, failed = run_dns_record_checks(api, tests, timeout_seconds=30)
+        passed, failed = run_dns_record_checks(
+            api, tests, timeout_seconds=30, phase="create"
+        )
         print()
 
         # Summary
