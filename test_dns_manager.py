@@ -10,6 +10,7 @@ import uuid
 from typing import Dict, List, Tuple
 
 import docker
+import pytest
 import requests
 
 # Configuration
@@ -192,33 +193,73 @@ def cleanup_test_containers(containers: List[docker.models.containers.Container]
             log_test(f"Container cleanup: {container.name}", "FAIL", str(e))
 
 
+@pytest.fixture(scope="module")
+def test_env():
+    """Create temporary test containers and return test records + containers."""
+    try:
+        client = docker.from_env()
+        client.ping()
+    except Exception as e:
+        pytest.skip(f"Docker not available: {e}")
+
+    tests, containers = setup_test_containers()
+    yield tests, containers
+    cleanup_test_containers(containers)
+
+
+@pytest.fixture(scope="module")
+def tests(test_env) -> List[Dict]:
+    return test_env[0]
+
+
+@pytest.fixture(scope="module")
+def containers(test_env) -> List[docker.models.containers.Container]:
+    return test_env[1]
+
+
+@pytest.fixture(scope="module")
+def api() -> CloudflareAPI:
+    try:
+        api_token = read_api_token()
+    except SystemExit:
+        pytest.skip("Missing API token")
+    api_client = CloudflareAPI(api_token, CF_ZONE_NAME)
+    if not api_client.get_zone_id():
+        pytest.skip("Failed to get zone ID")
+    return api_client
+
+
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_records(api: CloudflareAPI, tests: List[Dict]):
+    record_names = [test["name"] for test in tests]
+    yield
+    cleanup_test_records(api, record_names)
+
+
 def test_docker_containers(containers: List[docker.models.containers.Container]) -> bool:
     """Test that test containers are running"""
     log_test("Docker Connection", "INFO", "Checking test containers...")
 
-    try:
-        running_containers = []
-        for container in containers:
-            container.reload()
-            if container.status == "running":
-                running_containers.append(container.name)
-                log_test(
-                    f"Container: {container.name}",
-                    "PASS",
-                    f"Status: {container.status}",
-                )
-            else:
-                log_test(
-                    f"Container: {container.name}",
-                    "FAIL",
-                    f"Status: {container.status}",
-                )
+    running_containers = []
+    for container in containers:
+        container.reload()
+        if container.status == "running":
+            running_containers.append(container.name)
+            log_test(
+                f"Container: {container.name}",
+                "PASS",
+                f"Status: {container.status}",
+            )
+        else:
+            log_test(
+                f"Container: {container.name}",
+                "FAIL",
+                f"Status: {container.status}",
+            )
 
-        return len(running_containers) == len(containers)
-
-    except Exception as e:
-        log_test("Docker Connection", "FAIL", str(e))
-        return False
+    result = len(running_containers) == len(containers)
+    assert result
+    return result
 
 
 def test_dns_records(api: CloudflareAPI, tests: List[Dict]):
@@ -255,6 +296,7 @@ def test_dns_records(api: CloudflareAPI, tests: List[Dict]):
             )
             failed += 1
 
+    assert failed == 0
     return passed, failed
 
 
