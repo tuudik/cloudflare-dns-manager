@@ -16,6 +16,7 @@ import requests
 # Configuration
 CF_API_TOKEN_FILE = os.getenv("CF_API_TOKEN_FILE", "/run/secrets/cf_api_token")
 CF_ZONE_NAME = os.getenv("CF_ZONE_NAME", "example.com")
+CF_ZONE_ID = os.getenv("CF_ZONE_ID")
 TEST_SLEEP = 5  # Seconds to wait for DNS sync
 REQUIRE_CF_TESTS = os.getenv("REQUIRE_CF_TESTS", "").lower() in ("1", "true", "yes")
 
@@ -229,6 +230,9 @@ def api() -> CloudflareAPI:
             pytest.fail("Missing API token")
         pytest.skip("Missing API token")
     api_client = CloudflareAPI(api_token, CF_ZONE_NAME)
+    if CF_ZONE_ID:
+        api_client.zone_id = CF_ZONE_ID
+        return api_client
     if not api_client.get_zone_id():
         if REQUIRE_CF_TESTS:
             pytest.fail("Failed to get zone ID")
