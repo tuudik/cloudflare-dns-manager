@@ -86,13 +86,15 @@ jobs:
         env:
           CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
         run: |
-          pytest test_dns_manager.py -v --cov=dns-manager --cov-report=xml --cov-report=term
+          pytest test_dns_manager.py -v --cov=./dns-manager.py --cov-report=xml --cov-report=term
         continue-on-error: true
         
       - name: Upload coverage reports
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          handle_no_reports_found: true
         continue-on-error: true
 
   docker-test-build:
