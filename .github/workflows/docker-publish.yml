@@ -12,9 +12,150 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint with flake8
+        run: |
+          # Stop on syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Exit-zero treats all errors as warnings
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Format check with black
+        run: black --check --diff dns-manager.py
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    # Only run tests if Cloudflare credentials are available
+    # (They won't be available for PRs from forks for security)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Create test config
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_TEST }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID_TEST }}
+          CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
+        run: |
+          mkdir -p .secrets
+          printf "%s" "${CLOUDFLARE_API_TOKEN}" > .secrets/cf_api_token
+          cat > config.yaml << EOF
+          global:
+            domain: "${CF_ZONE_NAME}"
+            zone_id: "${CLOUDFLARE_ZONE_ID}"
+            api_token: "${CLOUDFLARE_API_TOKEN}"
+            default_ip: "192.168.1.100"
+            docker_discovery: true
+            docker_defaults:
+              proxied: false
+              ttl: 1
+              type: "A"
+          
+          domains:
+            ${CF_ZONE_NAME}:
+              zone_id: "${CLOUDFLARE_ZONE_ID}"
+              api_token: "${CLOUDFLARE_API_TOKEN}"
+          
+          manual_records: []
+          EOF
+
+      - name: Run tests with pytest
+        env:
+          CF_API_TOKEN_FILE: .secrets/cf_api_token
+          CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
+          CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID_TEST }}
+          REQUIRE_CF_TESTS: true
+        run: |
+          pytest test_dns_manager.py -v --cov=. --cov-branch --cov-report=xml --cov-report=term --junitxml=pytest-report.xml
+
+        - name: Write test summary
+        if: always()
+        run: |
+          python - << 'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if not summary:
+            raise SystemExit("GITHUB_STEP_SUMMARY not set")
+
+          def format_list(items, limit=20):
+            if not items:
+              return "- none"
+            shown = items[:limit]
+            suffix = "" if len(items) <= limit else f" (and {len(items) - limit} more)"
+            return "- " + ", ".join(shown) + suffix
+
+          lines = ["## Test Summary", "", "- Test suite: `pytest test_dns_manager.py`"]
+
+          junit_path = "pytest-report.xml"
+          if os.path.exists(junit_path):
+            tree = ET.parse(junit_path)
+            root = tree.getroot()
+            passed, failed, skipped = [], [], []
+            for case in root.findall(".//testcase"):
+              name = f"{case.get('classname')}::{case.get('name')}"
+              if case.find("failure") is not None or case.find("error") is not None:
+                failed.append(name)
+              elif case.find("skipped") is not None:
+                skipped.append(name)
+              else:
+                passed.append(name)
+            lines.append(f"- Passed tests ({len(passed)}):")
+            lines.append(format_list(passed))
+            lines.append(f"- Failed tests ({len(failed)}):")
+            lines.append(format_list(failed))
+            if skipped:
+              lines.append(f"- Skipped tests ({len(skipped)}):")
+              lines.append(format_list(skipped))
+          else:
+            lines.append("- Test details: not available (pytest-report.xml missing)")
+
+          with open(summary, "a", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+          PY
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: ./coverage.xml
+          if-no-files-found: warn
+
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
+    needs: [lint, test]
     permissions:
       contents: read
       packages: write

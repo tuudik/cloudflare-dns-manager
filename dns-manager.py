@@ -3,8 +3,10 @@
 Cloudflare DNS Manager - Syncs local DNS records to Cloudflare
 Watches config file and Docker containers for changes
 """
+import ipaddress
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -34,6 +36,8 @@ class CloudflareDNSManager:
     MANAGED_COMMENT = os.getenv(
         "CF_MANAGED_COMMENT", "managed-by:cloudflare-dns-manager"
     )
+    CONNECT_TIMEOUT = float(os.getenv("CF_CONNECT_TIMEOUT", "5"))
+    READ_TIMEOUT = float(os.getenv("CF_READ_TIMEOUT", "30"))
 
     def __init__(self, api_token: str, zone_name: str):
         self.api_token = api_token
@@ -44,6 +48,7 @@ class CloudflareDNSManager:
             "Content-Type": "application/json",
         }
         self.zone_id = None
+        self.timeout = (self.CONNECT_TIMEOUT, self.READ_TIMEOUT)
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         """Send a request with basic retry on rate limiting."""
@@ -52,7 +57,20 @@ class CloudflareDNSManager:
         response = None
 
         for _ in range(retries + 1):
-            response = requests.request(method, url, **kwargs)
+            try:
+                response = requests.request(
+                    method, url, timeout=self.timeout, **kwargs
+                )
+            except requests.RequestException as exc:
+                log(
+                    "error",
+                    "Cloudflare request failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+                response = requests.Response()
+                response.status_code = 0
+                return response
             if response.status_code != 429:
                 return response
 
@@ -320,6 +338,49 @@ def load_config(config_file: str) -> tuple[Dict, List[Dict]]:
         return {}, []
 
 
+LABEL_TOKEN = os.getenv("CF_LABEL_TOKEN")
+ALLOWED_RECORD_TYPES = {"A", "AAAA", "CNAME", "TXT"}
+HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+
+
+def _is_valid_hostname(name: str) -> bool:
+    if name == "@":
+        return True
+    if not name or name.startswith(".") or name.endswith("."):
+        return False
+    labels = name.split(".")
+    for label in labels:
+        if label == "*":
+            continue
+        if not HOST_LABEL_RE.match(label):
+            return False
+    return True
+
+
+def _normalize_record_type(record_type: str) -> str:
+    return record_type.strip().upper()
+
+
+def _is_valid_record_content(record_type: str, content: str) -> bool:
+    record_type = _normalize_record_type(record_type)
+    if record_type == "A":
+        try:
+            return ipaddress.ip_address(content).version == 4
+        except ValueError:
+            return False
+    if record_type == "AAAA":
+        try:
+            return ipaddress.ip_address(content).version == 6
+        except ValueError:
+            return False
+    if record_type == "CNAME":
+        value = content.rstrip(".")
+        return _is_valid_hostname(value)
+    if record_type == "TXT":
+        return bool(content) and len(content) <= 255
+    return False
+
+
 def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # noqa: C901
     """Discover DNS records from Docker containers with cloudflare labels"""
 
@@ -342,6 +403,16 @@ def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # no
             expose = labels.get("cloudflare-dns-manager.expose", "").lower()
             if expose not in ["true", "private", "public"]:
                 continue
+
+            if LABEL_TOKEN:
+                token = labels.get("cloudflare-dns-manager.token")
+                if token != LABEL_TOKEN:
+                    log(
+                        "warning",
+                        "Skipping container missing label token",
+                        container=container.name,
+                    )
+                    continue
 
             # Get subdomain from label or container name
             subdomain = labels.get("cloudflare-dns-manager.subdomain")
@@ -382,7 +453,17 @@ def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # no
                 proxied = default_proxied
 
             # Get record type (use label, then default)
-            record_type = labels.get("cloudflare-dns-manager.type", default_type)
+            record_type = _normalize_record_type(
+                labels.get("cloudflare-dns-manager.type", default_type)
+            )
+            if record_type not in ALLOWED_RECORD_TYPES:
+                log(
+                    "warning",
+                    "Skipping record with invalid type",
+                    container=container.name,
+                    record_type=record_type,
+                )
+                continue
 
             # Get TTL (use label, then default)
             ttl_label = labels.get("cloudflare-dns-manager.ttl")
@@ -390,6 +471,25 @@ def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # no
                 ttl = int(ttl_label)
             else:
                 ttl = default_ttl
+
+            if not _is_valid_hostname(subdomain):
+                log(
+                    "warning",
+                    "Skipping record with invalid name",
+                    container=container.name,
+                    subdomain=subdomain,
+                )
+                continue
+
+            if not _is_valid_record_content(record_type, ip):
+                log(
+                    "warning",
+                    "Skipping record with invalid content",
+                    container=container.name,
+                    record_type=record_type,
+                    content=ip,
+                )
+                continue
 
             record = {
                 "name": subdomain,
