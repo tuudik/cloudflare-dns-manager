@@ -126,15 +126,9 @@ def read_api_token() -> str:
 
 
 def generate_random_ip() -> str:
-    """Generate a random private IPv4 address."""
-    range_choice = random.choice(["10", "172", "192"])
-    if range_choice == "10":
-        return f"10.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
-    if range_choice == "172":
-        return (
-            f"172.{random.randint(16, 31)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
-        )
-    return f"192.168.{random.randint(0, 255)}.{random.randint(1, 254)}"
+    """Generate a random documentation-range IPv4 address."""
+    base = random.choice(["192.0.2", "198.51.100", "203.0.113"])
+    return f"{base}.{random.randint(1, 254)}"
 
 
 def setup_test_containers() -> Tuple[List[dict], List[docker.models.containers.Container]]:
