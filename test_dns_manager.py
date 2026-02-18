@@ -73,6 +73,21 @@ class CloudflareAPI:
                 return self.zone_id
         return None
 
+    def get_zone_name(self) -> str:
+        """Fetch zone name when only zone ID is known."""
+        if not self.zone_id:
+            return None
+
+        url = f"{self.base_url}/zones/{self.zone_id}"
+        response = requests.get(url, headers=self.headers)
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success") and data.get("result"):
+                self.zone_name = data["result"]["name"]
+                return self.zone_name
+        return None
+
     def get_record(self, name: str, record_type: str = "A") -> Dict:
         """Get a specific DNS record"""
         if not self.zone_id:
@@ -247,6 +262,10 @@ def api() -> CloudflareAPI:
     api_client = CloudflareAPI(api_token, CF_ZONE_NAME)
     if CF_ZONE_ID:
         api_client.zone_id = CF_ZONE_ID
+        if not api_client.get_zone_name():
+            if REQUIRE_CF_TESTS:
+                pytest.fail("Failed to fetch zone name")
+            pytest.skip("Failed to fetch zone name")
         return api_client
     if not api_client.get_zone_id():
         if REQUIRE_CF_TESTS:
@@ -262,7 +281,7 @@ def dns_manager_module():
 
 @pytest.fixture(scope="module", autouse=True)
 def sync_records(api: CloudflareAPI, tests: List[Dict], dns_manager_module):
-    manager = dns_manager_module.CloudflareDNSManager(api.api_token, CF_ZONE_NAME)
+    manager = dns_manager_module.CloudflareDNSManager(api.api_token, api.zone_name)
     manager.zone_id = api.zone_id
     desired_records = [
         {
