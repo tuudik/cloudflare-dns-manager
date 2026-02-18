@@ -31,6 +31,10 @@ def log(level: str, message: str, **kwargs):
 
 
 class CloudflareDNSManager:
+    MANAGED_COMMENT = os.getenv(
+        "CF_MANAGED_COMMENT", "managed-by:cloudflare-dns-manager"
+    )
+
     def __init__(self, api_token: str, zone_name: str):
         self.api_token = api_token
         self.zone_name = zone_name
@@ -100,6 +104,7 @@ class CloudflareDNSManager:
         content: str,
         proxied: bool = False,
         ttl: int = 1,
+        comment: Optional[str] = None,
     ) -> bool:
         """Create a new DNS record"""
         url = f"{self.base_url}/zones/{self.zone_id}/dns_records"
@@ -111,6 +116,8 @@ class CloudflareDNSManager:
             "proxied": proxied,
             "ttl": ttl,
         }
+        if comment:
+            payload["comment"] = comment
 
         response = requests.post(url, headers=self.headers, json=payload)
 
@@ -141,6 +148,7 @@ class CloudflareDNSManager:
         content: str,
         proxied: bool = False,
         ttl: int = 1,
+        comment: Optional[str] = None,
     ) -> bool:
         """Update an existing DNS record"""
         url = f"{self.base_url}/zones/{self.zone_id}/dns_records/{record_id}"
@@ -152,6 +160,8 @@ class CloudflareDNSManager:
             "proxied": proxied,
             "ttl": ttl,
         }
+        if comment:
+            payload["comment"] = comment
 
         response = requests.put(url, headers=self.headers, json=payload)
 
@@ -174,6 +184,24 @@ class CloudflareDNSManager:
         )
         return False
 
+    def delete_record(self, record_id: str, name: str) -> bool:
+        """Delete a DNS record"""
+        url = f"{self.base_url}/zones/{self.zone_id}/dns_records/{record_id}"
+
+        response = requests.delete(url, headers=self.headers)
+
+        if response.status_code == 200:
+            log("info", "DNS record deleted", name=name)
+            return True
+
+        log(
+            "error",
+            "Failed to delete DNS record",
+            name=name,
+            status=response.status_code,
+        )
+        return False
+
     def sync_records(self, desired_records: List[Dict]) -> None:
         """Sync desired records with Cloudflare"""
         if not self.get_zone_id():
@@ -184,6 +212,8 @@ class CloudflareDNSManager:
         log("info", "Found existing records", count=len(existing))
 
         log("info", "Starting sync", desired_count=len(desired_records))
+
+        desired_keys = set()
 
         for record in desired_records:
             name = record["name"]
@@ -203,6 +233,8 @@ class CloudflareDNSManager:
 
             key = f"{full_name}:{record_type}"
 
+            desired_keys.add(key)
+
             if key in existing:
                 # Check if update needed
                 existing_record = existing[key]
@@ -218,12 +250,27 @@ class CloudflareDNSManager:
                         content,
                         proxied,
                         ttl,
+                        comment=self.MANAGED_COMMENT,
                     )
                 else:
                     log("debug", "No change needed", name=full_name, content=content)
             else:
                 # Create new record
-                self.create_record(full_name, record_type, content, proxied, ttl)
+                self.create_record(
+                    full_name,
+                    record_type,
+                    content,
+                    proxied,
+                    ttl,
+                    comment=self.MANAGED_COMMENT,
+                )
+
+        for key, record in existing.items():
+            if key in desired_keys:
+                continue
+            if record.get("comment") != self.MANAGED_COMMENT:
+                continue
+            self.delete_record(record["id"], record["name"])
 
 
 def load_config(config_file: str) -> tuple[Dict, List[Dict]]:

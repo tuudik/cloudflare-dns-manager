@@ -90,6 +90,7 @@ jobs:
           CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
           CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID_TEST }}
           REQUIRE_CF_TESTS: true
+          CF_MANAGED_COMMENT: github-actions:${{ github.run_id }}
         run: |
           pytest test_dns_manager.py -v --cov=. --cov-branch --cov-report=xml --cov-report=term
 
