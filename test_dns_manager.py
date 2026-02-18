@@ -256,6 +256,8 @@ def api() -> CloudflareAPI:
     api_client = CloudflareAPI(api_token, CF_ZONE_NAME)
     if CF_ZONE_ID:
         api_client.zone_id = CF_ZONE_ID
+        if api_client.zone_name:
+            return api_client
         if not api_client.get_zone_name():
             if REQUIRE_CF_TESTS:
                 pytest.fail("Failed to fetch zone name")
@@ -288,14 +290,12 @@ def sync_records(api: CloudflareAPI, tests: List[Dict], dns_manager_module):
         for test in tests
     ]
     manager.sync_records(desired_records)
-    yield
-
-
-@pytest.fixture(scope="module", autouse=True)
-def cleanup_records(api: CloudflareAPI, tests: List[Dict]):
-    record_names = [test["name"] for test in tests]
-    yield
-    cleanup_test_records(api, record_names)
+    try:
+        yield
+    finally:
+        record_names = [test["name"] for test in tests]
+        cleanup_test_records(api, record_names)
+        cleanup_stale_test_records(api, dns_manager_module)
 
 
 def test_docker_containers(containers: List[docker.models.containers.Container]) -> None:
@@ -323,8 +323,12 @@ def test_docker_containers(containers: List[docker.models.containers.Container])
     assert result
 
 
-def test_dns_records(api: CloudflareAPI, tests: List[Dict]):
-    """Test that DNS records are created correctly"""
+def run_dns_record_checks(
+    api: CloudflareAPI,
+    tests: List[Dict],
+    timeout_seconds: int = 20,
+) -> Tuple[int, int]:
+    """Check that DNS records are created correctly and return counts."""
     log_test("DNS Records", "INFO", f"Waiting {TEST_SLEEP}s for sync...")
     time.sleep(TEST_SLEEP)
 
@@ -332,33 +336,126 @@ def test_dns_records(api: CloudflareAPI, tests: List[Dict]):
     failed = 0
 
     for test in tests:
-        record = api.get_record(test["name"])
+        expected_ip = test["expected_ip"]
+        record = None
+        matched = False
 
-        if record:
-            if record.get("content") == test["expected_ip"]:
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            record = api.get_record(test["name"])
+            if record and record.get("content") == expected_ip:
+                matched = True
+                break
+            time.sleep(1)
+
+        if matched:
+            log_test(
+                f"Record: {test['name']}",
+                "PASS",
+                f"IP: {expected_ip} - {test['description']}",
+            )
+            passed += 1
+        else:
+            if record:
                 log_test(
                     f"Record: {test['name']}",
-                    "PASS",
-                    f"IP: {record.get('content')} - {test['description']}",
+                    "FAIL",
+                    f"Expected {expected_ip}, got {record.get('content')}",
                 )
-                passed += 1
             else:
                 log_test(
                     f"Record: {test['name']}",
                     "FAIL",
-                    f"Expected {test['expected_ip']}, got {record.get('content')}",
+                    f"Record not found - {test['description']}",
                 )
-                failed += 1
-        else:
-            log_test(
-                f"Record: {test['name']}",
-                "FAIL",
-                f"Record not found - {test['description']}",
-            )
             failed += 1
 
-    assert failed == 0
     return passed, failed
+
+
+def wait_for_record_absence(
+    api: CloudflareAPI,
+    record_name: str,
+    timeout_seconds: int = 10,
+    interval_seconds: float = 1.0,
+) -> bool:
+    """Wait until a DNS record no longer exists."""
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if api.get_record(record_name) is None:
+            return True
+        time.sleep(interval_seconds)
+    return False
+
+
+def update_dns_records(
+    api: CloudflareAPI,
+    dns_manager_module,
+    tests: List[Dict],
+) -> List[Dict]:
+    """Update existing DNS records to new IPs and return updated expectations."""
+    manager = dns_manager_module.CloudflareDNSManager(api.api_token, api.zone_name)
+    manager.zone_id = api.zone_id
+
+    updated_tests = []
+    for test in tests:
+        new_ip = generate_random_ip()
+        while new_ip == test["expected_ip"]:
+            new_ip = generate_random_ip()
+
+        updated_tests.append(
+            {
+                "name": test["name"],
+                "expected_ip": new_ip,
+                "description": f"Update record: {test['description']}",
+            }
+        )
+
+    desired_records = [
+        {
+            "name": test["name"],
+            "type": "A",
+            "content": test["expected_ip"],
+            "proxied": False,
+            "ttl": 1,
+        }
+        for test in updated_tests
+    ]
+    manager.sync_records(desired_records)
+    return updated_tests
+
+
+def test_dns_records(
+    api: CloudflareAPI,
+    tests: List[Dict],
+    dns_manager_module,
+) -> None:
+    """Test that DNS records are created correctly"""
+    passed, failed = run_dns_record_checks(api, tests, timeout_seconds=30)
+    assert failed == 0
+
+    updated_tests = update_dns_records(api, dns_manager_module, tests)
+    passed, failed = run_dns_record_checks(api, updated_tests, timeout_seconds=60)
+    assert failed == 0
+
+    manager = dns_manager_module.CloudflareDNSManager(api.api_token, api.zone_name)
+    manager.zone_id = api.zone_id
+    remaining_tests = updated_tests[:-1]
+    removed_test = updated_tests[-1]
+    desired_records = [
+        {
+            "name": test["name"],
+            "type": "A",
+            "content": test["expected_ip"],
+            "proxied": False,
+            "ttl": 1,
+        }
+        for test in remaining_tests
+    ]
+    manager.sync_records(desired_records)
+
+    removed = wait_for_record_absence(api, removed_test["name"])
+    assert removed
 
 
 def cleanup_test_records(api: CloudflareAPI, record_names: List[str]):
@@ -374,6 +471,27 @@ def cleanup_test_records(api: CloudflareAPI, record_names: List[str]):
                 log_test(f"Cleanup: {name}", "FAIL", "Failed to delete")
         else:
             log_test(f"Cleanup: {name}", "INFO", "Not found (already clean)")
+
+
+def cleanup_stale_test_records(api: CloudflareAPI, dns_manager_module) -> None:
+    """Remove any leftover test records from previous runs."""
+    manager = dns_manager_module.CloudflareDNSManager(api.api_token, api.zone_name)
+    manager.zone_id = api.zone_id
+    existing = manager.get_existing_records()
+
+    prefixes = (
+        "cf-test-minimal-",
+        "cf-test-custom-subdomain-",
+        "cf-test-custom-ip-",
+        "testsubdomain-",
+        "traefik-",
+    )
+
+    for record in existing.values():
+        name = record.get("name", "")
+        if not any(name.startswith(f"{prefix}") for prefix in prefixes):
+            continue
+        manager.delete_record(record["id"], name)
 
 
 def main():
@@ -418,7 +536,7 @@ def main():
         # Test 2: DNS records
         print(f"{Colors.YELLOW}Test 2: DNS Record Creation{Colors.RESET}")
         print("-" * 60)
-        passed, failed = test_dns_records(api, tests)
+        passed, failed = run_dns_record_checks(api, tests, timeout_seconds=30)
         print()
 
         # Summary
