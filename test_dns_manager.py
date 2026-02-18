@@ -256,8 +256,6 @@ def api() -> CloudflareAPI:
     api_client = CloudflareAPI(api_token, CF_ZONE_NAME)
     if CF_ZONE_ID:
         api_client.zone_id = CF_ZONE_ID
-        if api_client.zone_name:
-            return api_client
         if not api_client.get_zone_name():
             if REQUIRE_CF_TESTS:
                 pytest.fail("Failed to fetch zone name")
