@@ -107,42 +107,42 @@ jobs:
 
           summary = os.environ.get("GITHUB_STEP_SUMMARY")
           if not summary:
-            raise SystemExit("GITHUB_STEP_SUMMARY not set")
+              raise SystemExit("GITHUB_STEP_SUMMARY not set")
 
           def format_list(items, limit=20):
-            if not items:
-              return "- none"
-            shown = items[:limit]
-            suffix = "" if len(items) <= limit else f" (and {len(items) - limit} more)"
-            return "- " + ", ".join(shown) + suffix
+              if not items:
+                  return "- none"
+              shown = items[:limit]
+              suffix = "" if len(items) <= limit else f" (and {len(items) - limit} more)"
+              return "- " + ", ".join(shown) + suffix
 
           lines = ["## Test Summary", "", "- Test suite: `pytest test_dns_manager.py`"]
 
           junit_path = "pytest-report.xml"
           if os.path.exists(junit_path):
-            tree = ET.parse(junit_path)
-            root = tree.getroot()
-            passed, failed, skipped = [], [], []
-            for case in root.findall(".//testcase"):
-              name = f"{case.get('classname')}::{case.get('name')}"
-              if case.find("failure") is not None or case.find("error") is not None:
-                failed.append(name)
-              elif case.find("skipped") is not None:
-                skipped.append(name)
-              else:
-                passed.append(name)
-            lines.append(f"- Passed tests ({len(passed)}):")
-            lines.append(format_list(passed))
-            lines.append(f"- Failed tests ({len(failed)}):")
-            lines.append(format_list(failed))
-            if skipped:
-              lines.append(f"- Skipped tests ({len(skipped)}):")
-              lines.append(format_list(skipped))
+              tree = ET.parse(junit_path)
+              root = tree.getroot()
+              passed, failed, skipped = [], [], []
+              for case in root.findall(".//testcase"):
+                  name = f"{case.get('classname')}::{case.get('name')}"
+                  if case.find("failure") is not None or case.find("error") is not None:
+                      failed.append(name)
+                  elif case.find("skipped") is not None:
+                      skipped.append(name)
+                  else:
+                      passed.append(name)
+              lines.append(f"- Passed tests ({len(passed)}):")
+              lines.append(format_list(passed))
+              lines.append(f"- Failed tests ({len(failed)}):")
+              lines.append(format_list(failed))
+              if skipped:
+                  lines.append(f"- Skipped tests ({len(skipped)}):")
+                  lines.append(format_list(skipped))
           else:
-            lines.append("- Test details: not available (pytest-report.xml missing)")
+              lines.append("- Test details: not available (pytest-report.xml missing)")
 
           with open(summary, "a", encoding="utf-8") as handle:
-            handle.write("\n".join(lines) + "\n")
+              handle.write("\n".join(lines) + "\n")
           PY
 
       - name: Upload coverage report
