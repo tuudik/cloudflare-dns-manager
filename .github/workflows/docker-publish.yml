@@ -92,7 +92,7 @@ jobs:
       - name: Run tests with pytest
         env:
           CF_API_TOKEN_FILE: .secrets/cf_api_token
-          CF_ZONE_NAME: ${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}
+          CF_ZONE_NAME: "${{ vars.CF_ZONE_NAME_TEST || 'test.example.com' }}"
           CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID_TEST }}
           REQUIRE_CF_TESTS: true
         run: |
