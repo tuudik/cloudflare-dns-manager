@@ -19,7 +19,7 @@ import requests
 CF_API_TOKEN_FILE = os.getenv("CF_API_TOKEN_FILE", "/run/secrets/cf_api_token")
 CF_ZONE_NAME = os.getenv("CF_ZONE_NAME", "example.com")
 CF_ZONE_ID = os.getenv("CF_ZONE_ID")
-TEST_SLEEP = 5  # Seconds to wait for DNS sync
+TEST_SLEEP = 10  # Seconds to wait for DNS sync (increased for API propagation)
 REQUIRE_CF_TESTS = os.getenv("REQUIRE_CF_TESTS", "").lower() in ("1", "true", "yes")
 DNS_MANAGER_PATH = Path(__file__).with_name("dns-manager.py")
 REDACT_TOKEN = "<redacted-domain>"
