@@ -157,6 +157,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      attestations: write
       
     steps:
       - name: Checkout repository
@@ -178,6 +179,8 @@ jobs:
         with:
           images: |
             name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest
