@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: '*'
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint Code
@@ -167,6 +170,8 @@ jobs:
     name: Test Docker Build
     runs-on: ubuntu-latest
     needs: lint
+    permissions:
+      contents: read
     
     steps:
       - uses: actions/checkout@v4
