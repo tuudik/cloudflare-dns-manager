@@ -10,7 +10,7 @@ import re
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import docker
@@ -63,7 +63,7 @@ def log(level: str, message: str, **kwargs):
         return
 
     log_entry = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "level": level.upper(),
         "message": message,
         "service": "cloudflare-dns-manager",
