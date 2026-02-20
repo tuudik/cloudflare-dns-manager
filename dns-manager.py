@@ -20,8 +20,48 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 
+LOG_LEVELS = {"debug": 10, "info": 20, "warning": 30, "error": 40}
+INFO_CHANGE_MESSAGES = {
+    "DNS record created",
+    "DNS record updated",
+    "DNS record deleted",
+    "No DNS record changes",
+}
+
+
+def _get_log_level() -> str:
+    value = os.getenv("CF_LOG_LEVEL", "info").strip().lower()
+    if value not in LOG_LEVELS:
+        return "info"
+    return value
+
+
+CURRENT_LOG_LEVEL = _get_log_level()
+
+
+def _should_log(level: str, message: str) -> bool:
+    level_name = level.strip().lower()
+    if level_name not in LOG_LEVELS:
+        level_name = "info"
+
+    if LOG_LEVELS[level_name] < LOG_LEVELS[CURRENT_LOG_LEVEL]:
+        return False
+
+    if (
+        CURRENT_LOG_LEVEL == "info"
+        and level_name == "info"
+        and message not in INFO_CHANGE_MESSAGES
+    ):
+        return False
+
+    return True
+
+
 def log(level: str, message: str, **kwargs):
     """Log in JSON format for Loki/Grafana"""
+    if not _should_log(level, message):
+        return
+
     log_entry = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "level": level.upper(),
@@ -243,6 +283,8 @@ class CloudflareDNSManager:
         if not self.get_zone_id():
             return
 
+        changes_made = 0
+
         log("info", "Fetching existing records")
         existing = self.get_existing_records()
         log("info", "Found existing records", count=len(existing))
@@ -279,7 +321,7 @@ class CloudflareDNSManager:
                     or existing_record["proxied"] != proxied
                     or existing_record["ttl"] != ttl
                 ):
-                    self.update_record(
+                    updated = self.update_record(
                         existing_record["id"],
                         full_name,
                         record_type,
@@ -288,11 +330,13 @@ class CloudflareDNSManager:
                         ttl,
                         comment=self.MANAGED_COMMENT,
                     )
+                    if updated:
+                        changes_made += 1
                 else:
                     log("debug", "No change needed", name=full_name, content=content)
             else:
                 # Create new record
-                self.create_record(
+                created = self.create_record(
                     full_name,
                     record_type,
                     content,
@@ -300,13 +344,20 @@ class CloudflareDNSManager:
                     ttl,
                     comment=self.MANAGED_COMMENT,
                 )
+                if created:
+                    changes_made += 1
 
         for key, record in existing.items():
             if key in desired_keys:
                 continue
             if record.get("comment") != self.MANAGED_COMMENT:
                 continue
-            self.delete_record(record["id"], record["name"])
+            deleted = self.delete_record(record["id"], record["name"])
+            if deleted:
+                changes_made += 1
+
+        if changes_made == 0:
+            log("info", "No DNS record changes")
 
 
 def load_config(config_file: str) -> tuple[Dict, List[Dict]]:

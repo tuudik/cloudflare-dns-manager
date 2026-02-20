@@ -58,6 +58,7 @@ services:
     environment:
       - CF_ZONE_NAME=example.com
       - WATCH_DOCKER=true
+      - CF_LOG_LEVEL=info
     network_mode: host
 ```
 
@@ -149,6 +150,19 @@ docker logs cloudflare-dns-manager -f
 All logs are in **JSON format** for easy parsing by Loki/Promtail:
 ```json
 {"timestamp": "2026-02-18T12:34:56Z", "level": "INFO", "message": "DNS record created", "name": "myservice.example.com", "content": "192.168.1.100", "service": "cloudflare-dns-manager"}
+```
+
+### Log Levels
+
+Control logging with `CF_LOG_LEVEL` environment variable:
+
+- `info` (default): only DNS record change events are logged (`created`, `updated`, `deleted`), plus a `No DNS record changes` message when a sync makes no changes
+- `debug`: full operational logs (startup, discovery, sync details, and change events)
+
+Example:
+```yaml
+environment:
+  - CF_LOG_LEVEL=debug
 ```
 
 ### Manual restart (if needed):
