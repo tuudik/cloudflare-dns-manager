@@ -46,6 +46,9 @@ jobs:
     name: Run Tests
     runs-on: ubuntu-latest
     needs: lint
+    concurrency:
+      group: cloudflare-integration-tests
+      cancel-in-progress: false
     permissions:
       contents: read
 
