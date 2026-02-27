@@ -278,6 +278,78 @@ class CloudflareDNSManager:
         )
         return False
 
+    def _get_full_record_name(self, name: str) -> str:
+        """Return a fully-qualified record name for this zone."""
+        if name.endswith(f".{self.zone_name}"):
+            return name
+        if name == "@":
+            return self.zone_name
+        return f"{name}.{self.zone_name}"
+
+    @staticmethod
+    def _record_needs_update(
+        existing_record: Dict, content: str, proxied: bool, ttl: int
+    ) -> bool:
+        """Check whether an existing DNS record differs from desired state."""
+        return (
+            existing_record["content"] != content
+            or existing_record["proxied"] != proxied
+            or existing_record["ttl"] != ttl
+        )
+
+    def _sync_desired_record(self, record: Dict, existing: Dict[str, Dict]) -> tuple[str, bool]:
+        """Create or update a desired record and return (key, changed)."""
+        name = record["name"]
+        record_type = record.get("type", "A")
+        content = record["content"]
+        proxied = record.get("proxied", False)
+        ttl = record.get("ttl", 1)
+
+        full_name = self._get_full_record_name(name)
+        key = f"{full_name}:{record_type}"
+
+        if key not in existing:
+            created = self.create_record(
+                full_name,
+                record_type,
+                content,
+                proxied,
+                ttl,
+                comment=self.MANAGED_COMMENT,
+            )
+            return key, created
+
+        existing_record = existing[key]
+        if not self._record_needs_update(existing_record, content, proxied, ttl):
+            log("debug", "No change needed", name=full_name, content=content)
+            return key, False
+
+        updated = self.update_record(
+            existing_record["id"],
+            full_name,
+            record_type,
+            content,
+            proxied,
+            ttl,
+            comment=self.MANAGED_COMMENT,
+        )
+        return key, updated
+
+    def _remove_stale_managed_records(
+        self, existing: Dict[str, Dict], desired_keys: set[str]
+    ) -> int:
+        """Delete managed records that are no longer desired."""
+        removed = 0
+        for key, record in existing.items():
+            if key in desired_keys:
+                continue
+            if record.get("comment") != self.MANAGED_COMMENT:
+                continue
+            deleted = self.delete_record(record["id"], record["name"])
+            if deleted:
+                removed += 1
+        return removed
+
     def sync_records(self, desired_records: List[Dict]) -> None:
         """Sync desired records with Cloudflare"""
         if not self.get_zone_id():
@@ -294,67 +366,12 @@ class CloudflareDNSManager:
         desired_keys = set()
 
         for record in desired_records:
-            name = record["name"]
-            record_type = record.get("type", "A")
-            content = record["content"]
-            proxied = record.get("proxied", False)
-            ttl = record.get("ttl", 1)
-
-            # Ensure full domain name
-            if not name.endswith(f".{self.zone_name}"):
-                if name == "@":
-                    full_name = self.zone_name
-                else:
-                    full_name = f"{name}.{self.zone_name}"
-            else:
-                full_name = name
-
-            key = f"{full_name}:{record_type}"
-
+            key, changed = self._sync_desired_record(record, existing)
             desired_keys.add(key)
-
-            if key in existing:
-                # Check if update needed
-                existing_record = existing[key]
-                if (
-                    existing_record["content"] != content
-                    or existing_record["proxied"] != proxied
-                    or existing_record["ttl"] != ttl
-                ):
-                    updated = self.update_record(
-                        existing_record["id"],
-                        full_name,
-                        record_type,
-                        content,
-                        proxied,
-                        ttl,
-                        comment=self.MANAGED_COMMENT,
-                    )
-                    if updated:
-                        changes_made += 1
-                else:
-                    log("debug", "No change needed", name=full_name, content=content)
-            else:
-                # Create new record
-                created = self.create_record(
-                    full_name,
-                    record_type,
-                    content,
-                    proxied,
-                    ttl,
-                    comment=self.MANAGED_COMMENT,
-                )
-                if created:
-                    changes_made += 1
-
-        for key, record in existing.items():
-            if key in desired_keys:
-                continue
-            if record.get("comment") != self.MANAGED_COMMENT:
-                continue
-            deleted = self.delete_record(record["id"], record["name"])
-            if deleted:
+            if changed:
                 changes_made += 1
+
+        changes_made += self._remove_stale_managed_records(existing, desired_keys)
 
         if changes_made == 0:
             log("info", "No DNS record changes")
