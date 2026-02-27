@@ -80,6 +80,7 @@ services:
     image: myapp:latest
     labels:
       - "cloudflare-dns-manager.expose=private"  # Enable DNS record creation
+      - "cloudflare-dns-manager.dyndns=true"  # Optional: use external IP from ipinfo.io/ip
       - "cloudflare-dns-manager.subdomain=myservice"  # Optional: defaults to container name
       - "cloudflare-dns-manager.ip=192.168.1.189"  # Optional: defaults to DOCKER_DEFAULT_IP
       - "cloudflare-dns-manager.proxied=false"  # Optional: default false
@@ -90,8 +91,9 @@ services:
 ### Label Options:
 
 - **`cloudflare-dns-manager.expose`**: Required. Set to `true`, `private`, or `public` to enable
+- **`cloudflare-dns-manager.dyndns`**: Optional. Set to `true` to use external IP from `https://ipinfo.io/ip`
 - **`cloudflare-dns-manager.subdomain`**: Subdomain name (auto-detected from Traefik labels or container name)
-- **`cloudflare-dns-manager.ip`**: IP address (defaults to `global.default_ip` from config.yaml)
+- **`cloudflare-dns-manager.ip`**: IP address (defaults to `global.default_ip` from config.yaml, ignored when `dyndns=true`)
 - **`cloudflare-dns-manager.proxied`**: Whether to proxy through Cloudflare (defaults to `global.default_proxied`)
 - **`cloudflare-dns-manager.type`**: Record type (defaults to `global.docker_defaults.type`)
 - **`cloudflare-dns-manager.ttl`**: TTL in seconds (defaults to `global.docker_defaults.ttl`)

@@ -34,6 +34,27 @@ class Colors:
     RESET = "\033[0m"
 
 
+class DummyResponse:
+    def __init__(self, status_code: int, text: str):
+        self.status_code = status_code
+        self.text = text
+
+
+class DummyContainer:
+    def __init__(self, name: str, labels: dict):
+        self.name = name
+        self.labels = labels
+
+
+class DummyClient:
+    def __init__(self, containers):
+        self._containers = containers
+        self.containers = self
+
+    def list(self):
+        return self._containers
+
+
 def log_test(name: str, status: str, message: str = ""):
     """Pretty print test results"""
     if CF_ZONE_NAME:
@@ -283,6 +304,72 @@ def load_dns_manager_module():
     return module
 
 
+def test_dyndns_record_uses_external_ip_and_proxied_label(monkeypatch):
+    module = load_dns_manager_module()
+
+    containers = [
+        DummyContainer(
+            "web",
+            {
+                "cloudflare-dns-manager.expose": "private",
+                "cloudflare-dns-manager.dyndns": "true",
+                "cloudflare-dns-manager.subdomain": "home",
+                "cloudflare-dns-manager.proxied": "true",
+            },
+        )
+    ]
+
+    monkeypatch.setattr(module.docker, "from_env", lambda: DummyClient(containers))
+    monkeypatch.setattr(
+        module.requests,
+        "get",
+        lambda *args, **kwargs: DummyResponse(200, "203.0.113.10\n"),
+    )
+
+    records = module.get_docker_records("192.168.1.100", {"docker_defaults": {}})
+
+    assert len(records) == 1
+    assert records[0]["name"] == "home"
+    assert records[0]["content"] == "203.0.113.10"
+    assert records[0]["proxied"] is True
+
+
+def test_dyndns_public_ip_is_fetched_once_per_discovery(monkeypatch):
+    module = load_dns_manager_module()
+
+    containers = [
+        DummyContainer(
+            "svc-a",
+            {
+                "cloudflare-dns-manager.expose": "true",
+                "cloudflare-dns-manager.dyndns": "true",
+            },
+        ),
+        DummyContainer(
+            "svc-b",
+            {
+                "cloudflare-dns-manager.expose": "true",
+                "cloudflare-dns-manager.dyndns": "true",
+            },
+        ),
+    ]
+
+    calls = {"count": 0}
+
+    def fake_get(*args, **kwargs):
+        calls["count"] += 1
+        return DummyResponse(200, "198.51.100.11")
+
+    monkeypatch.setattr(module.docker, "from_env", lambda: DummyClient(containers))
+    monkeypatch.setattr(module.requests, "get", fake_get)
+
+    records = module.get_docker_records("192.168.1.100", {"docker_defaults": {}})
+
+    assert len(records) == 2
+    assert all(record["content"] == "198.51.100.11" for record in records)
+    assert calls["count"] == 1
+
+
 @pytest.fixture(scope="module")
 def test_env():
     """Create temporary test containers and return test records + containers."""
@@ -339,7 +426,7 @@ def dns_manager_module():
     return load_dns_manager_module()
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="module")
 def sync_records(api: CloudflareAPI, tests: List[Dict], dns_manager_module):
     manager = dns_manager_module.CloudflareDNSManager(api.api_token, api.zone_name)
     manager.zone_id = api.zone_id
@@ -514,10 +601,34 @@ def update_dns_records(
     return updated_tests
 
 
+def create_dyndns_test_container() -> docker.models.containers.Container:
+    """Create a temporary container configured for dyndns discovery."""
+    run_id = uuid.uuid4().hex[:8]
+    container_name = f"cf-test-dyndns-{run_id}"
+    labels = {
+        "cloudflare-dns-manager.expose": "private",
+        "cloudflare-dns-manager.dyndns": "true",
+        "cloudflare-dns-manager.subdomain": f"dyndns-{run_id}",
+        "cloudflare-dns-manager.proxied": "true",
+        "cloudflare-dns-manager.type": "A",
+        "cloudflare-dns-manager.ttl": "1",
+    }
+
+    client = docker.from_env()
+    return client.containers.run(
+        "alpine:latest",
+        "sleep infinity",
+        detach=True,
+        name=container_name,
+        labels=labels,
+    )
+
+
 def test_dns_records(
     api: CloudflareAPI,
     tests: List[Dict],
     dns_manager_module,
+    sync_records,
 ) -> None:
     """Test that DNS records are created correctly"""
     log_test("Test Scope", "INFO", "Function: test_dns_records (create/update/delete)")
@@ -550,6 +661,56 @@ def test_dns_records(
 
     removed = wait_for_record_absence(api, removed_test["name"])
     assert removed
+
+
+def test_dyndns_record_management(api: CloudflareAPI, dns_manager_module) -> None:
+    """Test end-to-end dyndns record discovery and sync using Docker labels."""
+    manager = dns_manager_module.CloudflareDNSManager(api.api_token, api.zone_name)
+    manager.zone_id = api.zone_id
+    manager.MANAGED_COMMENT = f"managed-by:dyndns-test-{uuid.uuid4().hex[:8]}"
+
+    container = None
+    record_name = None
+    try:
+        container = create_dyndns_test_container()
+        time.sleep(2)
+
+        discovered = dns_manager_module.get_docker_records(
+            "192.168.1.100",
+            {
+                "docker_defaults": {
+                    "proxied": False,
+                    "ttl": 1,
+                    "type": "A",
+                }
+            },
+        )
+
+        target = None
+        for record in discovered:
+            if record.get("container") == container.name:
+                target = record
+                break
+
+        assert target is not None
+        assert target["proxied"] is True
+        assert target["type"] == "A"
+        assert target["content"]
+
+        record_name = target["name"]
+        expected_ip = target["content"]
+
+        manager.sync_records([target])
+        matched, _ = wait_for_record_content(api, record_name, expected_ip, 30)
+        assert matched
+
+    finally:
+        if record_name:
+            existing = api.get_record(record_name)
+            if existing:
+                api.delete_record(existing["id"])
+        if container is not None:
+            cleanup_test_containers([container])
 
 
 def cleanup_test_records(api: CloudflareAPI, record_names: List[str]):

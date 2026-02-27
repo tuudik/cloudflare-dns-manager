@@ -429,6 +429,49 @@ def _normalize_record_type(record_type: str) -> str:
     return record_type.strip().upper()
 
 
+def _is_truthy_label(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_public_ip() -> Optional[str]:
+    """Fetch external IP used for dynamic DNS records."""
+    url = "https://ipinfo.io/ip"
+    try:
+        response = requests.get(url, timeout=5)
+    except requests.RequestException as exc:
+        log(
+            "error",
+            "Failed to fetch external IP",
+            provider="ipinfo.io",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return None
+
+    if response.status_code != 200:
+        log(
+            "error",
+            "Failed to fetch external IP",
+            provider="ipinfo.io",
+            status=response.status_code,
+        )
+        return None
+
+    ip = response.text.strip()
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        log(
+            "error",
+            "External IP provider returned invalid IP",
+            provider="ipinfo.io",
+            content=ip,
+        )
+        return None
+
+    return ip
+
+
 def _is_valid_record_content(record_type: str, content: str) -> bool:
     record_type = _normalize_record_type(record_type)
     if record_type == "A":
@@ -458,6 +501,8 @@ def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # no
     default_proxied = docker_defaults.get("proxied", False)
     default_ttl = docker_defaults.get("ttl", 1)
     default_type = docker_defaults.get("type", "A")
+    cached_public_ip: Optional[str] = None
+    public_ip_attempted = False
 
     try:
         client = docker.from_env()
@@ -471,6 +516,8 @@ def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # no
             expose = labels.get("cloudflare-dns-manager.expose", "").lower()
             if expose not in ["true", "private", "public"]:
                 continue
+
+            is_dyndns = _is_truthy_label(labels.get("cloudflare-dns-manager.dyndns", ""))
 
             if LABEL_TOKEN:
                 token = labels.get("cloudflare-dns-manager.token")
@@ -507,9 +554,22 @@ def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # no
                     subdomain = container.name
 
             # Get IP address (use label, then global default, then fallback)
-            ip = labels.get("cloudflare-dns-manager.ip")
-            if not ip:
-                ip = default_ip
+            if is_dyndns:
+                if not public_ip_attempted:
+                    cached_public_ip = _get_public_ip()
+                    public_ip_attempted = True
+                if not cached_public_ip:
+                    log(
+                        "warning",
+                        "Skipping dynamic DNS container due to missing external IP",
+                        container=container.name,
+                    )
+                    continue
+                ip = cached_public_ip
+            else:
+                ip = labels.get("cloudflare-dns-manager.ip")
+                if not ip:
+                    ip = default_ip
 
             # Get proxied setting (use label, then default)
             proxied_label = labels.get("cloudflare-dns-manager.proxied", "").lower()
@@ -577,6 +637,7 @@ def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # no
                 subdomain=subdomain,
                 ip=ip,
                 expose=expose,
+                dyndns=is_dyndns,
             )
 
         return records
