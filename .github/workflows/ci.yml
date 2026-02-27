@@ -43,19 +43,19 @@ jobs:
           # Fail on style/complexity issues too
           flake8 . --count --max-complexity=10 --max-line-length=127 --statistics
 
-      - name: Auto-format with black (PR)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+      - name: Auto-format with black
+        if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         run: black dns-manager.py test_dns_manager.py
 
       - name: Commit Black formatting changes
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "style: auto-format with black"
+          commit_message: "style: auto-format with black (run ${{ github.run_id }}, sha ${{ github.sha }})"
           file_pattern: dns-manager.py test_dns_manager.py
 
-      - name: Format check with black (non-PR)
-        if: github.event_name != 'pull_request'
+      - name: Format check with black (read-only contexts)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: black --check --diff dns-manager.py test_dns_manager.py
 
   test:
