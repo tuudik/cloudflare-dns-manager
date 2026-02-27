@@ -175,7 +175,9 @@ def generate_random_ip() -> str:
     return f"{base}.{random.randint(1, 254)}"
 
 
-def setup_test_containers() -> Tuple[List[dict], List[docker.models.containers.Container]]:
+def setup_test_containers() -> (
+    Tuple[List[dict], List[docker.models.containers.Container]]
+):
     """Create temporary test containers with randomized IP labels."""
     run_id = uuid.uuid4().hex[:8]
     client = docker.from_env()
@@ -216,9 +218,9 @@ def setup_test_containers() -> Tuple[List[dict], List[docker.models.containers.C
         if test_def.get("subdomain"):
             labels["cloudflare-dns-manager.subdomain"] = test_def["subdomain"]
         if test_def.get("traefik"):
-            labels[
-                f"traefik.http.routers.{container_name}.rule"
-            ] = f"Host(`{test_def['subdomain']}.{CF_ZONE_NAME}`)"
+            labels[f"traefik.http.routers.{container_name}.rule"] = (
+                f"Host(`{test_def['subdomain']}.{CF_ZONE_NAME}`)"
+            )
 
         container = client.containers.run(
             "alpine:latest",
@@ -241,7 +243,9 @@ def setup_test_containers() -> Tuple[List[dict], List[docker.models.containers.C
     return tests, containers
 
 
-def cleanup_test_containers(containers: List[docker.models.containers.Container]) -> None:
+def cleanup_test_containers(
+    containers: List[docker.models.containers.Container],
+) -> None:
     """Stop and remove temporary test containers."""
     for container in containers:
         try:
@@ -357,7 +361,9 @@ def sync_records(api: CloudflareAPI, tests: List[Dict], dns_manager_module):
         cleanup_stale_test_records(api, dns_manager_module)
 
 
-def test_docker_containers(containers: List[docker.models.containers.Container]) -> None:
+def test_docker_containers(
+    containers: List[docker.models.containers.Container],
+) -> None:
     """Test that test containers are running"""
     log_test("Test Scope", "INFO", "Function: test_docker_containers")
     log_test("Docker Connection", "INFO", "Checking test containers...")

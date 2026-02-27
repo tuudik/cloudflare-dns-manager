@@ -297,7 +297,9 @@ class CloudflareDNSManager:
             or existing_record["ttl"] != ttl
         )
 
-    def _sync_desired_record(self, record: Dict, existing: Dict[str, Dict]) -> tuple[str, bool]:
+    def _sync_desired_record(
+        self, record: Dict, existing: Dict[str, Dict]
+    ) -> tuple[str, bool]:
         """Create or update a desired record and return (key, changed)."""
         name = record["name"]
         record_type = record.get("type", "A")
