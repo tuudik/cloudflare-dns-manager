@@ -517,7 +517,9 @@ def get_docker_records(docker_ip: str, global_config: Dict) -> List[Dict]:  # no
             if expose not in ["true", "private", "public"]:
                 continue
 
-            is_dyndns = _is_truthy_label(labels.get("cloudflare-dns-manager.dyndns", ""))
+            is_dyndns = _is_truthy_label(
+                labels.get("cloudflare-dns-manager.dyndns", "")
+            )
 
             if LABEL_TOKEN:
                 token = labels.get("cloudflare-dns-manager.token")
