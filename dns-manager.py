@@ -3,6 +3,7 @@
 Cloudflare DNS Manager - Syncs local DNS records to Cloudflare
 Watches config file and Docker containers for changes
 """
+
 import ipaddress
 import json
 import os
@@ -18,7 +19,6 @@ import requests
 import yaml
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
-
 
 LOG_LEVELS = {"debug": 10, "info": 20, "warning": 30, "error": 40}
 INFO_CHANGE_MESSAGES = {

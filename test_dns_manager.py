@@ -2,6 +2,7 @@
 """
 Test suite for Cloudflare DNS Manager
 """
+
 import importlib.util
 import os
 import random
