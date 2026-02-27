@@ -37,6 +37,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Lint with flake8
+        id: flake8
         run: |
           # Stop on syntax errors or undefined names
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
@@ -44,10 +45,12 @@ jobs:
           flake8 . --count --max-complexity=10 --max-line-length=127 --statistics
 
       - name: Auto-format with black
+        id: black_autofmt
         if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         run: black dns-manager.py test_dns_manager.py
 
       - name: Commit Black formatting changes
+        id: black_commit
         if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
@@ -55,8 +58,53 @@ jobs:
           file_pattern: dns-manager.py test_dns_manager.py
 
       - name: Format check with black (read-only contexts)
+        id: black_check
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: black --check --diff dns-manager.py test_dns_manager.py
+
+      - name: Write lint summary
+        if: always()
+        env:
+          FLAKE8_OUTCOME: ${{ steps.flake8.outcome }}
+          BLACK_AUTOFMT_OUTCOME: ${{ steps.black_autofmt.outcome }}
+          BLACK_COMMIT_OUTCOME: ${{ steps.black_commit.outcome }}
+          BLACK_CHECK_OUTCOME: ${{ steps.black_check.outcome }}
+          BLACK_CHANGES_DETECTED: ${{ steps.black_commit.outputs.changes_detected }}
+        run: |
+          python - << 'PY'
+          import os
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if not summary:
+              raise SystemExit("GITHUB_STEP_SUMMARY not set")
+
+          def value(name: str) -> str:
+              return os.environ.get(name) or "not-run"
+
+          flake8_outcome = value("FLAKE8_OUTCOME")
+          black_autofmt_outcome = value("BLACK_AUTOFMT_OUTCOME")
+          black_commit_outcome = value("BLACK_COMMIT_OUTCOME")
+          black_check_outcome = value("BLACK_CHECK_OUTCOME")
+          black_changes = value("BLACK_CHANGES_DETECTED")
+
+          lines = [
+              "## Lint Summary",
+              "",
+              f"- flake8: {flake8_outcome}",
+          ]
+
+          if black_autofmt_outcome != "not-run":
+              lines.append(f"- black auto-format: {black_autofmt_outcome}")
+              lines.append(f"- black auto-commit: {black_commit_outcome}")
+              if black_commit_outcome != "not-run":
+                  lines.append(f"- formatting changes committed: {black_changes}")
+
+          if black_check_outcome != "not-run":
+              lines.append(f"- black check: {black_check_outcome}")
+
+          with open(summary, "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          PY
 
   test:
     name: Run Tests
