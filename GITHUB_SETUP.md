@@ -25,10 +25,12 @@ Go to your GitHub repository → Settings → Secrets and variables → Actions
 #### 3. **DOCKERHUB_USERNAME** (optional)
 - **Purpose**: DockerHub username for publishing images
 - **When**: Only if you want to publish to DockerHub in addition to GitHub Container Registry
+- **Expected value**: `tuudik` or the Docker Hub namespace that should receive `cloudflare-dns-manager`
 
 #### 4. **DOCKERHUB_TOKEN** (optional)
 - **Purpose**: DockerHub access token
 - **Create at**: https://hub.docker.com/settings/security
+- **Required scope**: Read, Write, Delete for the target repository or namespace
 
 #### 5. **CODECOV_TOKEN** (optional)
 - **Purpose**: Upload test coverage reports to Codecov

@@ -6,6 +6,8 @@
 
 Automatically sync your local network DNS records to Cloudflare based on Docker container labels - like Traefik, but for DNS!
 
+Published images are available on both GitHub Container Registry (`ghcr.io/tuudik/cloudflare-dns-manager`) and Docker Hub (`tuudik/cloudflare-dns-manager`).
+
 ## Features
 
 - 🐳 **Auto-discover services from Docker labels** (Traefik-style)
@@ -284,6 +286,12 @@ Visit: https://dash.cloudflare.com/ → Select your domain → DNS
 docker pull ghcr.io/tuudik/cloudflare-dns-manager:latest
 ```
 
+Or from Docker Hub:
+
+```bash
+docker pull tuudik/cloudflare-dns-manager:latest
+```
+
 ### Option 2: Build from Source
 
 ```bash
@@ -307,6 +315,8 @@ docker compose up -d
 - `ghcr.io/tuudik/cloudflare-dns-manager:latest` - Latest stable release
 - `ghcr.io/tuudik/cloudflare-dns-manager:main` - Latest from main branch
 - `ghcr.io/tuudik/cloudflare-dns-manager:vX.Y.Z` - Specific version tags
+- `tuudik/cloudflare-dns-manager:latest` - Latest stable release on Docker Hub
+- `tuudik/cloudflare-dns-manager:vX.Y.Z` - Specific version tags on Docker Hub
 
 Supported architectures: `linux/amd64`, `linux/arm64`, `linux/arm/v7`
 
