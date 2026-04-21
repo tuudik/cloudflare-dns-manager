@@ -6,6 +6,9 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
+# Pull latest security fixes from Alpine packages in the base image.
+RUN apk upgrade --no-cache
+
 # Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
